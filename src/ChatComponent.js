@@ -6,38 +6,51 @@ import axios from 'axios';
 const ChatComponent = ({ crewId = 2 }) => {
     const [messages, setMessages] = useState([]);
     const [message, setMessage] = useState('');
-    const [sender, setSender] = useState(''); // 사용자 입력을 위한 sender 상태
+    const [sender, setSender] = useState('');
     const [isConnected, setIsConnected] = useState(false);
     const clientRef = useRef(null);
-    const subscriptionRef = useRef(null); // 구독 객체 저장
+    const subscriptionRef = useRef(null);
+    const messagesEndRef = useRef(null);
+
+    // 고정된 시간을 지정
+    const createDate = '2024-08-02T00:00:00'; // 원하는 시간으로 설정
 
     useEffect(() => {
-        fetchMessages(); // 컴포넌트 마운트 시 메시지 가져오기
+        fetchMessages(createDate); // createDate을 인자로 전달
         connect();
 
         return () => {
             disconnect();
             if (subscriptionRef.current) {
-                subscriptionRef.current.unsubscribe(); // 구독 해제
-                subscriptionRef.current = null; // 구독 객체 초기화
+                subscriptionRef.current.unsubscribe();
+                subscriptionRef.current = null;
             }
         };
-    }, [crewId]); // crewId가 변경될 때마다 메시지 재가져오기
+    }, [crewId]);
 
-    const fetchMessages = async () => {
+    const fetchMessages = async (createDate) => {
         try {
-            const response = await axios.get(`http://localhost:8080/api/chats/${crewId}`);
-            setMessages(response.data);
+            const response = await axios.get(`http://localhost:8082/api/v1/chats/${crewId}`, {
+                params: { createDate } // createDate을 쿼리 파라미터로 전달
+            });
+
+            // 응답에서 첫 번째 요소의 data를 확인
+            if (response.data && Array.isArray(response.data[0].data)) {
+                setMessages(response.data[0].data);
+            } else {
+                console.error("API response is not an array:", response.data);
+            }
         } catch (error) {
             console.error("Error fetching messages:", error);
         }
     };
 
     const connect = () => {
-        const socket = new SockJS('http://localhost:8080/ws');
+        const socket = new SockJS('http://localhost:8082/ws');
         clientRef.current = new Client({
             webSocketFactory: () => socket,
             onConnect: onConnected,
+            onDisconnect: onDisconnected,
             debug: (str) => {
                 console.log(str);
             },
@@ -49,10 +62,16 @@ const ChatComponent = ({ crewId = 2 }) => {
     };
 
     const onConnected = () => {
-        if (!subscriptionRef.current) { // 중복 구독 방지
+        if (!subscriptionRef.current) {
             setIsConnected(true);
             subscriptionRef.current = clientRef.current.subscribe('/topic/messages', onMessageReceived);
         }
+    };
+
+    const onDisconnected = () => {
+        setIsConnected(false);
+        alert("Disconnected from the chat. Attempting to reconnect...");
+        setTimeout(connect, 5000); // 5초 후 재연결 시도
     };
 
     const onMessageReceived = (message) => {
@@ -60,19 +79,19 @@ const ChatComponent = ({ crewId = 2 }) => {
         setMessages((prevMessages) => {
             const isDuplicate = prevMessages.some(msg => msg.id === chatMessage.id);
             if (!isDuplicate) {
-                return [...prevMessages, chatMessage]; // 새로운 메시지 추가
+                return [...prevMessages, chatMessage];
             }
-            return prevMessages; // 중복인 경우 기존 메시지 유지
+            return prevMessages;
         });
     };
 
     const sendMessage = () => {
-        if (isConnected && clientRef.current && sender && message.trim()) { // 메시지가 공백이 아닐 경우
+        if (isConnected && clientRef.current && sender && message.trim()) {
             const chatMessage = {
-                id: Date.now(), // 고유 ID로 타임스탬프 사용
                 sender,
                 message,
-                crewId,
+                crewId
+                // createDate // 고정된 LocalDateTime 포함
             };
             clientRef.current.publish({
                 destination: '/app/send',
@@ -80,7 +99,7 @@ const ChatComponent = ({ crewId = 2 }) => {
             });
             setMessage('');
         } else {
-            console.error("Client is not connected, sender is empty, or message is empty.");
+            alert("Unable to send message. Please check your connection and inputs.");
         }
     };
 
@@ -89,7 +108,12 @@ const ChatComponent = ({ crewId = 2 }) => {
             clientRef.current.deactivate();
         }
         setIsConnected(false);
+        alert("Disconnected from the chat.");
     };
+
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [messages]);
 
     return (
         <div>
@@ -100,16 +124,17 @@ const ChatComponent = ({ crewId = 2 }) => {
                 onChange={(e) => setSender(e.target.value)}
                 placeholder="Enter your name"
             />
-            {sender && ( // sender가 입력되면 메시지 내역을 표시
+            {sender && (
                 <div style={{ marginBottom: '10px' }}>
-                    {messages.map((msg) => (
+                    {Array.isArray(messages) && messages.map((msg) => (
                         <div key={msg.id} style={{
                             textAlign: msg.sender === sender ? 'right' : 'left',
                             margin: '5px 0'
                         }}>
-                            <strong>{msg.sender}:</strong> {msg.message}
+                            <strong>{msg.sender}:</strong> {msg.message} (시간: {msg.createDate}) {/* 시간 표시 */}
                         </div>
                     ))}
+                    <div ref={messagesEndRef} /> {/* 메시지 끝을 참조하여 스크롤 */}
                 </div>
             )}
             <input
