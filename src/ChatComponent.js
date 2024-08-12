@@ -3,38 +3,49 @@ import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 import axios from 'axios';
 
-const ChatComponent = ({ crewId = 2 }) => {
+const ChatComponent = ({ crewId = 1, receiverId = 33, senderId = 11 }) => {
     const [messages, setMessages] = useState([]);
     const [message, setMessage] = useState('');
-    const [sender, setSender] = useState(''); // 사용자 입력을 위한 sender 상태
     const [isConnected, setIsConnected] = useState(false);
     const clientRef = useRef(null);
-    const subscriptionRef = useRef(null); // 구독 객체 저장
+    const subscriptionRef = useRef(null);
 
     useEffect(() => {
-        fetchMessages(); // 컴포넌트 마운트 시 메시지 가져오기
+        fetchMessages();
         connect();
 
         return () => {
             disconnect();
             if (subscriptionRef.current) {
-                subscriptionRef.current.unsubscribe(); // 구독 해제
-                subscriptionRef.current = null; // 구독 객체 초기화
+                subscriptionRef.current.unsubscribe();
+                subscriptionRef.current = null;
             }
         };
-    }, [crewId]); // crewId가 변경될 때마다 메시지 재가져오기
+    }, [crewId]);
 
     const fetchMessages = async () => {
         try {
-            const response = await axios.get(`http://localhost:8080/api/chats/${crewId}`);
-            setMessages(response.data);
+            const response = await axios.get(`http://localhost:8082/api/v1/crews/${crewId}/chats`, {
+                params: {
+                    senderId: senderId,
+                    receiverId: receiverId
+                }
+            });
+            console.log("Fetched messages:", response.data);
+            if (Array.isArray(response.data)) {
+                // Ensure that each message has the expected structure
+                const validMessages = response.data.filter(msg => msg && msg.data.senderId !== undefined && msg.data.message !== undefined);
+                setMessages(validMessages);
+            } else {
+                console.error("Unexpected response format:", response.data);
+            }
         } catch (error) {
             console.error("Error fetching messages:", error);
         }
     };
 
     const connect = () => {
-        const socket = new SockJS('http://localhost:8080/ws');
+        const socket = new SockJS('http://localhost:8082/ws');
         clientRef.current = new Client({
             webSocketFactory: () => socket,
             onConnect: onConnected,
@@ -49,28 +60,33 @@ const ChatComponent = ({ crewId = 2 }) => {
     };
 
     const onConnected = () => {
-        if (!subscriptionRef.current) { // 중복 구독 방지
+        if (!subscriptionRef.current) {
             setIsConnected(true);
             subscriptionRef.current = clientRef.current.subscribe('/topic/messages', onMessageReceived);
         }
     };
 
     const onMessageReceived = (message) => {
-        const chatMessage = JSON.parse(message.body);
-        setMessages((prevMessages) => {
-            const isDuplicate = prevMessages.some(msg => msg.id === chatMessage.id);
-            if (!isDuplicate) {
-                return [...prevMessages, chatMessage]; // 새로운 메시지 추가
+            const chatMessage = JSON.parse(message.body);
+            console.log("Received message:", chatMessage);
+            if (chatMessage && chatMessage.data.senderId !== undefined && chatMessage.data.message !== undefined) {
+                setMessages((prevMessages) => {
+                    const isDuplicate = prevMessages.some(msg => msg.data.id === chatMessage.id);
+                    if (!isDuplicate) {
+                        return [...prevMessages, chatMessage];
+                    }
+                    return prevMessages;
+                });
+            } else {
+                console.error("Invalid message received:", chatMessage);
             }
-            return prevMessages; // 중복인 경우 기존 메시지 유지
-        });
     };
 
     const sendMessage = () => {
-        if (isConnected && clientRef.current && sender && message.trim()) { // 메시지가 공백이 아닐 경우
+        if (isConnected && clientRef.current && message.trim() && senderId) {
             const chatMessage = {
-                id: Date.now(), // 고유 ID로 타임스탬프 사용
-                sender,
+                senderId,
+                receiverId,
                 message,
                 crewId,
             };
@@ -80,7 +96,7 @@ const ChatComponent = ({ crewId = 2 }) => {
             });
             setMessage('');
         } else {
-            console.error("Client is not connected, sender is empty, or message is empty.");
+            console.error("Client is not connected, senderId is empty, or message is empty.");
         }
     };
 
@@ -94,20 +110,15 @@ const ChatComponent = ({ crewId = 2 }) => {
     return (
         <div>
             <h2>Chat Room: {crewId}</h2>
-            <input
-                type="text"
-                value={sender}
-                onChange={(e) => setSender(e.target.value)}
-                placeholder="Enter your name"
-            />
-            {sender && ( // sender가 입력되면 메시지 내역을 표시
+            {messages && messages.length > 0 && (
                 <div style={{ marginBottom: '10px' }}>
                     {messages.map((msg) => (
-                        <div key={msg.id} style={{
-                            textAlign: msg.sender === sender ? 'right' : 'left',
+                        // Ensure that msg has the expected structure
+                        <div key={msg.data.id} style={{
+                            textAlign: msg.data.senderId === senderId ? 'right' : 'left',
                             margin: '5px 0'
                         }}>
-                            <strong>{msg.sender}:</strong> {msg.message}
+                            <strong>{msg.data.senderId}:</strong> {msg.data.message}
                         </div>
                     ))}
                 </div>
@@ -118,7 +129,7 @@ const ChatComponent = ({ crewId = 2 }) => {
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Type a message"
             />
-            <button onClick={sendMessage} disabled={!isConnected || !sender || !message.trim()}>Send</button>
+            <button onClick={sendMessage} disabled={!isConnected || !message.trim()}>Send</button>
         </div>
     );
 };
