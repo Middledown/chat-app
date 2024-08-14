@@ -4,16 +4,37 @@ const ImageUploader = () => {
     const [content, setContent] = useState('');
     const contentEditableRef = useRef(null);
 
-    const handleImageChange = (event) => {
+    const handleImageChange = async (event) => {
         const files = Array.from(event.target.files);
-        files.forEach(file => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const imgTag = `<img src="${reader.result}" style="max-width: 100%; margin: 5px;" draggable="false" ondragstart="return false;" />`;
-                insertAtCursor(imgTag);
-            };
-            reader.readAsDataURL(file);
+        const imageUrls = await uploadImages(files);
+        imageUrls.forEach(url => {
+            const imgTag = `<img src="${url}" style="max-width: 100%; margin: 5px;" draggable="false" ondragstart="return false;" />`;
+            insertAtCursor(imgTag);
         });
+    };
+
+    const uploadImages = async (files) => {
+        const formData = new FormData();
+        files.forEach(file => {
+            formData.append('images', file); // 'images'라는 이름으로 파일 추가
+        });
+
+        try {
+            const response = await fetch('http://localhost:8082/api/v1/crews/1/boards/images', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                throw new Error('이미지 업로드 실패');
+            }
+
+            const data = await response.json();
+            return data.success ? data.data : []; // success가 true일 경우 data 반환
+        } catch (error) {
+            console.error('Error uploading images:', error);
+            return [];
+        }
     };
 
     const insertAtCursor = (imgTag) => {
@@ -65,14 +86,7 @@ const ImageUploader = () => {
     const handleDrop = (e) => {
         e.preventDefault();
         const files = Array.from(e.dataTransfer.files);
-        files.forEach(file => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const imgTag = `<img src="${reader.result}" style="max-width: 100%; margin: 5px;" draggable="false" ondragstart="return false;" />`;
-                insertAtCursor(imgTag);
-            };
-            reader.readAsDataURL(file);
-        });
+        handleImageChange({ target: { files } }); // 드롭된 파일 처리
     };
 
     const handleDragStart = (e) => {

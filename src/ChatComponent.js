@@ -3,20 +3,27 @@ import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 import axios from 'axios';
 
-const ChatComponent = ({ crewId = 2 }) => {
+// JWT 토큰을 상수로 정의
+const token = 'eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiVVNFUiIsIm1lbWJlcklkIjoxMDYsImlhdCI6MTcyMzUyNjQ0NiwiZXhwIjoxNzI0MTMxMjQ2fQ.YfdbjGJVbUikf9yHmMySUm4eTP2y-q5LI0OSYOYI1TM';
+
+// Axios 기본 설정 및 인터셉터 추가
+axios.defaults.baseURL = 'http://localhost:8082'; // 기본 URL 설정
+axios.interceptors.request.use(config => {
+    config.headers['Authorization'] = `Bearer ${token}`; // 모든 요청에 JWT 토큰 추가
+    return config;
+}, error => {
+    return Promise.reject(error);
+});
+
+const ChatComponent = ({ crewId = 1, receiverId = 22, senderId = 11 }) => {
     const [messages, setMessages] = useState([]);
     const [message, setMessage] = useState('');
-    const [sender, setSender] = useState('');
     const [isConnected, setIsConnected] = useState(false);
     const clientRef = useRef(null);
     const subscriptionRef = useRef(null);
-    const messagesEndRef = useRef(null);
-
-    // 고정된 시간을 지정
-    const createDate = '2024-08-02T00:00:00'; // 원하는 시간으로 설정
 
     useEffect(() => {
-        fetchMessages(createDate); // createDate을 인자로 전달
+        fetchMessages();
         connect();
 
         return () => {
@@ -28,17 +35,23 @@ const ChatComponent = ({ crewId = 2 }) => {
         };
     }, [crewId]);
 
-    const fetchMessages = async (createDate) => {
+    const fetchMessages = async () => {
         try {
-            const response = await axios.get(`http://localhost:8082/api/v1/chats/${crewId}`, {
-                params: { createDate } // createDate을 쿼리 파라미터로 전달
+            const response = await axios.get(`/api/v1/crews/${crewId}/chats`, {
+                headers: {
+                    Authorization: `Bearer ${token}` // 직접 헤더에 JWT 토큰 추가
+                },
+                params: {
+                    senderId: senderId,
+                    receiverId: receiverId
+                }
             });
-
-            // 응답에서 첫 번째 요소의 data를 확인
-            if (response.data && Array.isArray(response.data[0].data)) {
-                setMessages(response.data[0].data);
+            console.log("Fetched messages:", response.data);
+            if (Array.isArray(response.data)) {
+                const validMessages = response.data.filter(msg => msg && msg.data.senderId !== undefined && msg.data.message !== undefined);
+                setMessages(validMessages);
             } else {
-                console.error("API response is not an array:", response.data);
+                console.error("Unexpected response format:", response.data);
             }
         } catch (error) {
             console.error("Error fetching messages:", error);
@@ -49,8 +62,10 @@ const ChatComponent = ({ crewId = 2 }) => {
         const socket = new SockJS('http://localhost:8082/ws');
         clientRef.current = new Client({
             webSocketFactory: () => socket,
+            connectHeaders: {
+                Authorization: `Bearer ${token}`, // JWT 토큰 추가
+            },
             onConnect: onConnected,
-            onDisconnect: onDisconnected,
             debug: (str) => {
                 console.log(str);
             },
@@ -68,30 +83,29 @@ const ChatComponent = ({ crewId = 2 }) => {
         }
     };
 
-    const onDisconnected = () => {
-        setIsConnected(false);
-        alert("Disconnected from the chat. Attempting to reconnect...");
-        setTimeout(connect, 5000); // 5초 후 재연결 시도
-    };
-
     const onMessageReceived = (message) => {
         const chatMessage = JSON.parse(message.body);
-        setMessages((prevMessages) => {
-            const isDuplicate = prevMessages.some(msg => msg.id === chatMessage.id);
-            if (!isDuplicate) {
-                return [...prevMessages, chatMessage];
-            }
-            return prevMessages;
-        });
+        console.log("Received message:", chatMessage);
+        if (chatMessage && chatMessage.data.senderId !== undefined && chatMessage.data.message !== undefined) {
+            setMessages((prevMessages) => {
+                const isDuplicate = prevMessages.some(msg => msg.data.id === chatMessage.id);
+                if (!isDuplicate) {
+                    return [...prevMessages, chatMessage];
+                }
+                return prevMessages;
+            });
+        } else {
+            console.error("Invalid message received:", chatMessage);
+        }
     };
 
     const sendMessage = () => {
-        if (isConnected && clientRef.current && sender && message.trim()) {
+        if (isConnected && clientRef.current && message.trim() && senderId) {
             const chatMessage = {
-                sender,
+                senderId,
+                receiverId,
                 message,
-                crewId
-                // createDate // 고정된 LocalDateTime 포함
+                crewId,
             };
             clientRef.current.publish({
                 destination: '/app/send',
@@ -99,7 +113,7 @@ const ChatComponent = ({ crewId = 2 }) => {
             });
             setMessage('');
         } else {
-            alert("Unable to send message. Please check your connection and inputs.");
+            console.error("Client is not connected, senderId is empty, or message is empty.");
         }
     };
 
@@ -108,33 +122,21 @@ const ChatComponent = ({ crewId = 2 }) => {
             clientRef.current.deactivate();
         }
         setIsConnected(false);
-        alert("Disconnected from the chat.");
     };
-
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages]);
 
     return (
         <div>
             <h2>Chat Room: {crewId}</h2>
-            <input
-                type="text"
-                value={sender}
-                onChange={(e) => setSender(e.target.value)}
-                placeholder="Enter your name"
-            />
-            {sender && (
+            {messages && messages.length > 0 && (
                 <div style={{ marginBottom: '10px' }}>
-                    {Array.isArray(messages) && messages.map((msg) => (
-                        <div key={msg.id} style={{
-                            textAlign: msg.sender === sender ? 'right' : 'left',
+                    {messages.map((msg) => (
+                        <div key={msg.data.id} style={{
+                            textAlign: msg.data.senderId === senderId ? 'right' : 'left',
                             margin: '5px 0'
                         }}>
-                            <strong>{msg.sender}:</strong> {msg.message} (시간: {msg.createDate}) {/* 시간 표시 */}
+                            <strong>{msg.data.senderId}:</strong> {msg.data.message}
                         </div>
                     ))}
-                    <div ref={messagesEndRef} /> {/* 메시지 끝을 참조하여 스크롤 */}
                 </div>
             )}
             <input
@@ -143,7 +145,7 @@ const ChatComponent = ({ crewId = 2 }) => {
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Type a message"
             />
-            <button onClick={sendMessage} disabled={!isConnected || !sender || !message.trim()}>Send</button>
+            <button onClick={sendMessage} disabled={!isConnected || !message.trim()}>Send</button>
         </div>
     );
 };
