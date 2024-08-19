@@ -4,7 +4,7 @@ import { Client } from '@stomp/stompjs';
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode'; // jwt-decode 라이브러리에서 명시적으로 가져오기
 
-const token = 'eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiVVNFUiIsIm1lbWJlcklkIjoxMDYsImlhdCI6MTcyMzg3NzE0NiwiZXhwIjoxNzI0NDgxOTQ2fQ.t5yLIr9a3kgh15qwzuyKzaFAB-dYh8LZNhihuPkW_tY'; // 실제 토큰으로 교체하세요
+const token = 'eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiVVNFUiIsIm1lbWJlcklkIjoxMTgsImlhdCI6MTcyNDA1MzAyOSwiZXhwIjoxNzI0NjU3ODI5fQ.qusqtfXUC-zu_-gF22Ie_2BwEx8WnrVGYGbRtje7FuY'; // 실제 토큰으로 교체하세요
 
 // Axios 기본 설정
 axios.defaults.baseURL = 'http://localhost:8082';
@@ -15,7 +15,7 @@ axios.interceptors.request.use(config => {
     return Promise.reject(error);
 });
 
-const ChatComponent = ({ crewId = 1, receiverId }) => {
+const ChatComponent = ({ crewId = 1, receiverId = 106 }) => {
     const [messages, setMessages] = useState([]);
     const [message, setMessage] = useState('');
     const [isConnected, setIsConnected] = useState(false);
@@ -89,16 +89,14 @@ const ChatComponent = ({ crewId = 1, receiverId }) => {
 
     const onMessageReceived = (message) => {
         const chatMessage = JSON.parse(message.body);
-        if (chatMessage && chatMessage.data.senderId !== undefined && chatMessage.data.message !== undefined) {
+        if (chatMessage && chatMessage.data !== undefined) {
             setMessages((prevMessages) => {
-                const isDuplicate = prevMessages.some(msg => msg.data.id === chatMessage.data.id);
+                const isDuplicate = prevMessages.some(msg => msg.data.id === chatMessage.id);
                 if (!isDuplicate) {
                     return [...prevMessages, chatMessage];
                 }
                 return prevMessages;
             });
-        } else {
-            console.error("유효하지 않은 메시지 수신:", chatMessage);
         }
     };
 
@@ -106,7 +104,7 @@ const ChatComponent = ({ crewId = 1, receiverId }) => {
         if (isConnected && clientRef.current && message.trim()) {
             const chatMessage = { senderId, receiverId, message, crewId };
             clientRef.current.publish({
-                destination: '/app/send',
+                destination: `/app/send/${crewId}`,
                 body: JSON.stringify(chatMessage),
             });
             setMessage('');
@@ -128,8 +126,8 @@ const ChatComponent = ({ crewId = 1, receiverId }) => {
             {error && <div style={{ color: 'red' }}>{error}</div>}
             {messages.length > 0 && (
                 <div style={{ marginBottom: '10px' }}>
-                    {messages.map((msg) => (
-                        <div key={msg.data.id} style={{
+                    {messages.map((msg, idx) => (
+                        <div key={idx} style={{
                             textAlign: msg.data.senderId === senderId ? 'right' : 'left',
                             margin: '5px 0'
                         }}>
