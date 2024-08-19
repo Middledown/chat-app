@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 import axios from 'axios';
+import { jwtDecode } from 'jwt-decode'; // jwt-decode 라이브러리에서 명시적으로 가져오기
 
 const token = 'eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiVVNFUiIsIm1lbWJlcklkIjoxMDYsImlhdCI6MTcyMzg3NzE0NiwiZXhwIjoxNzI0NDgxOTQ2fQ.t5yLIr9a3kgh15qwzuyKzaFAB-dYh8LZNhihuPkW_tY'; // 실제 토큰으로 교체하세요
 
@@ -14,13 +15,16 @@ axios.interceptors.request.use(config => {
     return Promise.reject(error);
 });
 
-const ChatComponent = ({ crewId = 1, receiverId = 22, senderId = 11 }) => {
+const ChatComponent = ({ crewId = 1, receiverId }) => {
     const [messages, setMessages] = useState([]);
     const [message, setMessage] = useState('');
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState(null);
     const clientRef = useRef(null);
     const subscriptionRef = useRef(null);
+
+    // JWT 토큰에서 memberId 추출
+    const { memberId: senderId } = jwtDecode(token); // memberId를 senderId로 설정
 
     useEffect(() => {
         fetchMessages();
@@ -37,9 +41,11 @@ const ChatComponent = ({ crewId = 1, receiverId = 22, senderId = 11 }) => {
 
     const fetchMessages = async () => {
         try {
-            const response = await axios.get(`/api/v1/crews/${crewId}/chats`, {
-                params: { senderId, receiverId }
-            });
+            const params = {};
+            if (receiverId) {
+                params.receiverId = receiverId; // receiverId가 있을 경우에만 추가
+            }
+            const response = await axios.get(`/api/v1/crews/${crewId}/chats`, { params });
             if (Array.isArray(response.data)) {
                 const validMessages = response.data.filter(msg => msg && msg.data.senderId !== undefined && msg.data.message !== undefined);
                 setMessages(validMessages);
